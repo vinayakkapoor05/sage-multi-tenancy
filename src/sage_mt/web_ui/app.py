@@ -136,7 +136,7 @@ def ui() -> str:
   </head>
   <body>
     <h1>Sage Inference Gateway</h1>
-    <div class="muted">Interactive submit + polling. Backend proxies to your gateway.</div>
+    <div class="muted">Interactive submit + polling.</div>
 
     <div class="section">
       <h2>Submit job</h2>
