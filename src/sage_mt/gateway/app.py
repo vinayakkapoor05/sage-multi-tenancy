@@ -235,17 +235,25 @@ def ui() -> str:
           // Poll job status until completed/failed so the presenter sees the real result.
           const jobId = data.id;
           const pollUrl = `/api/jobs/${jobId}`;
-          out.textContent = JSON.stringify(data, null, 2);
+          if (!jobId) {
+            out.textContent =
+              "Error: gateway returned no `id` in the POST response: " + JSON.stringify(data, null, 2);
+            return;
+          }
+          out.textContent = `Submitted job_id=${jobId}. Polling for completion...\n\n` + JSON.stringify(data, null, 2);
 
           const deadline = Date.now() + 180000; // 3 minutes
           while (Date.now() < deadline) {
-            const stRes = await fetch(pollUrl);
-            const stText = await stRes.text();
-            let stData = null;
-            try { stData = JSON.parse(stText); } catch (e) { stData = { raw: stText }; }
-            out.textContent = JSON.stringify(stData, null, 2);
-            const status = stData.status;
-            if (status === 'completed' || status === 'failed') {
+            try {
+              const stRes = await fetch(pollUrl);
+              const stText = await stRes.text();
+              let stData = null;
+              try { stData = JSON.parse(stText); } catch (e) { stData = { raw: stText }; }
+              out.textContent = JSON.stringify(stData, null, 2);
+              const status = stData.status;
+              if (status === 'completed' || status === 'failed') return;
+            } catch (e) {
+              out.textContent = `Polling failed: ${String(e)}`;
               return;
             }
             await new Promise(r => setTimeout(r, 800));
