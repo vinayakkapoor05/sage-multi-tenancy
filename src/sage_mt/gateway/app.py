@@ -231,7 +231,27 @@ def ui() -> str:
             out.textContent = `Error ${res.status}: ${JSON.stringify(data, null, 2)}`;
             return;
           }
+
+          // Poll job status until completed/failed so the presenter sees the real result.
+          const jobId = data.id;
+          const pollUrl = `/api/jobs/${jobId}`;
           out.textContent = JSON.stringify(data, null, 2);
+
+          const deadline = Date.now() + 180000; // 3 minutes
+          while (Date.now() < deadline) {
+            const stRes = await fetch(pollUrl);
+            const stText = await stRes.text();
+            let stData = null;
+            try { stData = JSON.parse(stText); } catch (e) { stData = { raw: stText }; }
+            out.textContent = JSON.stringify(stData, null, 2);
+            const status = stData.status;
+            if (status === 'completed' || status === 'failed') {
+              return;
+            }
+            await new Promise(r => setTimeout(r, 800));
+          }
+
+          out.textContent = (out.textContent || '') + "\n\nTimed out waiting for job completion.";
         } catch (e) {
           out.textContent = `Fetch failed: ${String(e)}`;
         }
