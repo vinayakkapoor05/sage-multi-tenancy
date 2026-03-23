@@ -155,33 +155,42 @@ def ui() -> str:
         document.getElementById('torch_section').style.display = engine === 'torch' ? 'block' : 'none';
       }
 
-      document.getElementById('vllm_image').addEventListener('change', async (ev) => {
-        const file = ev.target.files[0];
-        if (!file) { vllmImageBase64 = null; vllmImageMimeType = null; return; }
-        const reader = new FileReader();
-        reader.onload = () => {
-          const res = String(reader.result);
-          const { b64, mime } = splitDataUrl(res);
-          vllmImageBase64 = b64;
-          vllmImageMimeType = mime;
-        };
-        reader.readAsDataURL(file);
-      });
+      const vllmImgEl = document.getElementById('vllm_image');
+      if (vllmImgEl) {
+        vllmImgEl.addEventListener('change', async (ev) => {
+          const file = ev.target.files[0];
+          if (!file) { vllmImageBase64 = null; vllmImageMimeType = null; return; }
+          const reader = new FileReader();
+          reader.onload = () => {
+            const res = String(reader.result);
+            const { b64, mime } = splitDataUrl(res);
+            vllmImageBase64 = b64;
+            vllmImageMimeType = mime;
+          };
+          reader.readAsDataURL(file);
+        });
+      }
 
-      document.getElementById('torch_image').addEventListener('change', async (ev) => {
-        const file = ev.target.files[0];
-        if (!file) { torchImageBase64 = null; torchImageMimeType = null; return; }
-        const reader = new FileReader();
-        reader.onload = () => {
-          const res = String(reader.result);
-          const { b64, mime } = splitDataUrl(res);
-          torchImageBase64 = b64;
-          torchImageMimeType = mime;
-        };
-        reader.readAsDataURL(file);
-      });
+      const torchImgEl = document.getElementById('torch_image');
+      if (torchImgEl) {
+        torchImgEl.addEventListener('change', async (ev) => {
+          const file = ev.target.files[0];
+          if (!file) { torchImageBase64 = null; torchImageMimeType = null; return; }
+          const reader = new FileReader();
+          reader.onload = () => {
+            const res = String(reader.result);
+            const { b64, mime } = splitDataUrl(res);
+            torchImageBase64 = b64;
+            torchImageMimeType = mime;
+          };
+          reader.readAsDataURL(file);
+        });
+      }
 
       async function submitJob() {
+        const out = document.getElementById('out');
+        out.textContent = 'Submitting...';
+
         const tenant_id = document.getElementById('tenant_id').value.trim();
         const latency_class = document.getElementById('latency_class').value;
         const engine = document.getElementById('engine').value;
@@ -214,9 +223,6 @@ def ui() -> str:
           if (!labelsRaw.trim()) { alert('Provide torch labels'); return; }
           if (!torchImageBase64) { alert('Select an image'); return; }
         }
-
-        const out = document.getElementById('out');
-        out.textContent = 'Submitting...';
 
         try {
           const res = await fetch('/api/jobs', {
