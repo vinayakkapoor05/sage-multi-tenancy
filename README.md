@@ -47,6 +47,9 @@ API endpoints:
 - `GET /api/scheduler/metrics` for fairness/resource metrics
 - `GET /api/jobs`
 
+UI:
+- `GET /ui` minimal interactive page for submitting jobs to the local gateway
+
 `POST /api/jobs` supports optional scheduling hints in the JSON body:
 - `deadline_ms`: deadline relative to submit time
 - `expected_runtime_ms`: scheduler cost hint for WFQ accounting
