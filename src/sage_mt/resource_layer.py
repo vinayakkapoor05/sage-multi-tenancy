@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 import subprocess
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,6 +25,57 @@ class GPUResourceLayer:
         default_factory=lambda: {Engine.vllm: 0, Engine.torch: 0}
     )
     _last_stats: _GpuStats = field(default_factory=_GpuStats)
+
+    def _read_tegrastats_once(self, interval_ms: int = 1000, timeout_s: float = 2.0) -> _GpuStats:
+        # Jetson (Orin) often lacks NVML support. tegrastats provides GR3D_FREQ/GPU utilization.
+        try:
+            proc = subprocess.Popen(
+                ["tegrastats", "--interval", str(interval_ms)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            assert proc.stdout is not None
+            line = ""
+            try:
+                deadline = time.monotonic() + timeout_s
+                # tegrastats may emit nothing immediately; keep reading until we get a non-empty line.
+                while time.monotonic() < deadline and not line:
+                    line = proc.stdout.readline().strip()
+                    if not line:
+                        time.sleep(0.05)
+            except Exception:
+                line = ""
+            finally:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+
+            # Utilization tokens vary a bit by JetPack.
+            m_util = re.search(r"(?:GR3D_FREQ|GPU)\s+(\d+(?:\.\d+)?)%", line)
+            util = float(m_util.group(1)) if m_util else None
+
+            # VRAM-free/total may appear as FB <used>/<total>MB on some configs.
+            m_fb = re.search(r"FB\s+(\d+)\s*/\s*(\d+)(?:MB)?", line)
+            if m_fb:
+                used = int(m_fb.group(1))
+                total = int(m_fb.group(2))
+                free = max(0, total - used)
+            else:
+                free = None
+                total = None
+
+            stats = _GpuStats(
+                utilization_pct=util,
+                free_vram_mb=free,
+                total_vram_mb=total,
+                source="tegrastats",
+            )
+            self._last_stats = stats
+            return stats
+        except Exception:
+            return self._last_stats
 
     def _read_gpu_stats(self) -> _GpuStats:
         # Try NVML first; fallback to nvidia-smi text query.
@@ -56,6 +109,8 @@ class GPUResourceLayer:
             ).strip()
             first = out.splitlines()[0]
             util_s, free_s, total_s = [x.strip() for x in first.split(",")]
+            if util_s == "N/A" or free_s == "N/A" or total_s == "N/A":
+                raise ValueError("nvidia-smi reported N/A")
             stats = _GpuStats(
                 utilization_pct=float(util_s),
                 free_vram_mb=int(free_s),
@@ -65,7 +120,7 @@ class GPUResourceLayer:
             self._last_stats = stats
             return stats
         except Exception:
-            return self._last_stats
+            return self._read_tegrastats_once()
 
     def can_admit(self, engine: Engine, latency_class: LatencyClass) -> bool:
         stats = self._read_gpu_stats()
