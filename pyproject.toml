@@ -28,6 +28,7 @@ torch-worker = [
 [project.scripts]
 sage-gateway = "sage_mt.gateway.app:main"
 sage-torch-worker = "sage_mt.torch_worker.app:main"
+sage-ui = "sage_mt.web_ui.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
