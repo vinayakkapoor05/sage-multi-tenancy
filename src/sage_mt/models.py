@@ -20,6 +20,8 @@ class Engine(str, Enum):
 class VllmPayload(BaseModel):
     prompt: str
     max_tokens: int = 256
+    image_base64: str | None = None
+    image_mime_type: str | None = None
 
 
 class TorchPayload(BaseModel):

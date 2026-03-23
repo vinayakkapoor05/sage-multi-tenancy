@@ -119,11 +119,12 @@ def ui() -> str:
       <div id="vllm_section">
         <div class="row"><label>prompt</label><textarea id="prompt" placeholder="Hello from Orin"></textarea></div>
         <div class="row"><label>max_tokens</label><input id="max_tokens" value="32" /></div>
+        <div class="row"><label>image (optional for vLLM)</label><input id="vllm_image" type="file" accept="image/*" /></div>
       </div>
 
       <div id="torch_section" style="display:none;">
         <div class="row"><label>labels</label><textarea id="labels" placeholder="Comma-separated, e.g. forest fire, wildfire smoke, animal"></textarea></div>
-        <div class="row"><label>image</label><input id="image" type="file" accept="image/*" /></div>
+        <div class="row"><label>image</label><input id="torch_image" type="file" accept="image/*" /></div>
       </div>
 
       <button onclick="submitJob()">Submit</button>
@@ -135,22 +136,47 @@ def ui() -> str:
     </div>
 
     <script>
-      let imageBase64 = null;
+      let vllmImageBase64 = null;
+      let vllmImageMimeType = null;
+      let torchImageBase64 = null;
+      let torchImageMimeType = null;
+
+      function splitDataUrl(dataUrl) {
+        // data:image/jpeg;base64,/9j/...
+        const parts = String(dataUrl).split(',');
+        if (parts.length !== 2) return { b64: dataUrl, mime: null };
+        const header = parts[0]; // data:mime;base64
+        const mime = header.includes('data:') && header.includes(';base64') ? header.slice(5, header.indexOf(';base64')) : null;
+        return { b64: parts[1], mime: mime };
+      }
       function onEngineChange() {
         const engine = document.getElementById('engine').value;
         document.getElementById('vllm_section').style.display = engine === 'vllm' ? 'block' : 'none';
         document.getElementById('torch_section').style.display = engine === 'torch' ? 'block' : 'none';
       }
 
-      document.getElementById('image').addEventListener('change', async (ev) => {
+      document.getElementById('vllm_image').addEventListener('change', async (ev) => {
         const file = ev.target.files[0];
-        if (!file) { imageBase64 = null; return; }
+        if (!file) { vllmImageBase64 = null; vllmImageMimeType = null; return; }
         const reader = new FileReader();
         reader.onload = () => {
           const res = String(reader.result);
-          // res like: data:image/jpeg;base64,/9j/...
-          const parts = res.split(',');
-          imageBase64 = parts.length === 2 ? parts[1] : res;
+          const { b64, mime } = splitDataUrl(res);
+          vllmImageBase64 = b64;
+          vllmImageMimeType = mime;
+        };
+        reader.readAsDataURL(file);
+      });
+
+      document.getElementById('torch_image').addEventListener('change', async (ev) => {
+        const file = ev.target.files[0];
+        if (!file) { torchImageBase64 = null; torchImageMimeType = null; return; }
+        const reader = new FileReader();
+        reader.onload = () => {
+          const res = String(reader.result);
+          const { b64, mime } = splitDataUrl(res);
+          torchImageBase64 = b64;
+          torchImageMimeType = mime;
         };
         reader.readAsDataURL(file);
       });
@@ -175,23 +201,40 @@ def ui() -> str:
 
         if (engine === 'vllm') {
           body.vllm = { prompt: prompt, max_tokens: max_tokens };
+          if (vllmImageBase64) {
+            body.vllm.image_base64 = vllmImageBase64;
+            body.vllm.image_mime_type = vllmImageMimeType || 'image/jpeg';
+          }
         } else {
           const labels = labelsRaw.split(',').map(s => s.trim()).filter(Boolean);
-          body.torch = { labels: labels, image_base64: imageBase64 };
+          body.torch = { labels: labels, image_base64: torchImageBase64 };
         }
 
         if (engine === 'torch') {
           if (!labelsRaw.trim()) { alert('Provide torch labels'); return; }
-          if (!imageBase64) { alert('Select an image'); return; }
+          if (!torchImageBase64) { alert('Select an image'); return; }
         }
 
-        const res = await fetch('/api/jobs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-        const data = await res.json();
-        document.getElementById('out').textContent = JSON.stringify(data, null, 2);
+        const out = document.getElementById('out');
+        out.textContent = 'Submitting...';
+
+        try {
+          const res = await fetch('/api/jobs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          const text = await res.text();
+          let data = null;
+          try { data = JSON.parse(text); } catch (e) { data = { raw: text }; }
+          if (!res.ok) {
+            out.textContent = `Error ${res.status}: ${JSON.stringify(data, null, 2)}`;
+            return;
+          }
+          out.textContent = JSON.stringify(data, null, 2);
+        } catch (e) {
+          out.textContent = `Fetch failed: ${String(e)}`;
+        }
       }
 
       onEngineChange();

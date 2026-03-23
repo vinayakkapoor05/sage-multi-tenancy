@@ -341,9 +341,19 @@ class InferenceScheduler:
         started = time.monotonic()
 
         url = f"{self.settings.vllm_base_url.rstrip('/')}/v1/chat/completions"
+        if item.payload.image_base64:
+            mime = item.payload.image_mime_type or "image/jpeg"
+            data_url = f"data:{mime};base64,{item.payload.image_base64}"
+            content = [
+                {"type": "text", "text": item.payload.prompt},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ]
+        else:
+            content = item.payload.prompt
+
         body = {
             "model": self.settings.vllm_model,
-            "messages": [{"role": "user", "content": item.payload.prompt}],
+            "messages": [{"role": "user", "content": content}],
             "max_tokens": item.payload.max_tokens,
         }
         try:
