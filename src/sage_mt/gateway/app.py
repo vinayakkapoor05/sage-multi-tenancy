@@ -63,6 +63,12 @@ async def api_scheduler_metrics() -> dict:
     return sched.metrics()
 
 
+@app.get("/api/jobs", response_model=list[JobRecord])
+async def api_jobs_list() -> list[JobRecord]:
+    sched = _sched()
+    return sorted(sched.jobs.values(), key=lambda r: r.submitted_at_ms)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     uvicorn.run(

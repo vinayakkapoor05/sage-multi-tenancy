@@ -45,9 +45,11 @@ API endpoints:
 - `POST /api/jobs` to submit a job
 - `GET /api/jobs/{job_id}` to fetch status/result
 - `GET /api/scheduler/metrics` for fairness/resource metrics
+- `GET /api/jobs`
 
 `POST /api/jobs` supports optional scheduling hints in the JSON body:
 - `deadline_ms`: deadline relative to submit time
 - `expected_runtime_ms`: scheduler cost hint for WFQ accounting
 
 See `.env.example` for all variables.
+
