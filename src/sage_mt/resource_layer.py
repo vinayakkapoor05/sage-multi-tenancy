@@ -32,7 +32,7 @@ class GPUResourceLayer:
             proc = subprocess.Popen(
                 ["tegrastats", "--interval", str(interval_ms)],
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+                stderr=subprocess.DEVNULL,
                 text=True,
             )
             assert proc.stdout is not None

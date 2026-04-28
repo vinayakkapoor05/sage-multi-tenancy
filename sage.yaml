@@ -1,0 +1,11 @@
+name: "sage-multi-tenancy-gateway"
+description: "Multi-tenant inference gateway with optional pywaggle publishing."
+keywords: "sage, inference, gateway, vllm, bioclip"
+authors: "Vinayak Kapoor"
+collaborators: ""
+funding: ""
+license: ""
+homepage: "https://github.com/your-org/sage-multi-tenancy"
+source:
+  architectures:
+    - "linux/arm64"

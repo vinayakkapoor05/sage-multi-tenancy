@@ -398,9 +398,28 @@ class InferenceScheduler:
         }
         try:
             r = await client.post(url, json=body)
-            r.raise_for_status()
-            data = r.json()
-            text = data["choices"][0]["message"]["content"]
+            if r.status_code == 404:
+                # Some vLLM runs expose /v1/completions but not /v1/chat/completions.
+                comp_url = f"{self.settings.vllm_base_url.rstrip('/')}/v1/completions"
+                comp_prompt = item.payload.prompt
+                if image_b64:
+                    comp_prompt = (
+                        f"{item.payload.prompt}\n\n"
+                        "[image attached as data URL for multimodal-capable backends]"
+                    )
+                comp_body = {
+                    "model": self.settings.vllm_model,
+                    "prompt": comp_prompt,
+                    "max_tokens": item.payload.max_tokens,
+                }
+                r = await client.post(comp_url, json=comp_body)
+                r.raise_for_status()
+                data = r.json()
+                text = data["choices"][0].get("text", "")
+            else:
+                r.raise_for_status()
+                data = r.json()
+                text = data["choices"][0]["message"]["content"]
             rec.status = "completed"
             rec.result = {"text": text, "raw": data}
         except Exception as e:

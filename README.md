@@ -57,3 +57,18 @@ UI:
 
 See `.env.example` for all variables.
 
+## Run as Sage plugin (Beehive path)
+
+To route `pywaggle` publishes through the managed plugin runtime (and into Beehive),
+package/run this repo as a Sage plugin.
+
+Included files:
+- `Dockerfile` (plugin image)
+- `sage.yaml` (plugin metadata)
+- `plugin-entrypoint.sh` (starts gateway with `PYWAGGLE_PUBLISH_ENABLED=true`)
+
+Important:
+- Update `homepage`, `authors`, etc. in `sage.yaml`.
+- Set runtime env for your deployment (`VLLM_BASE_URL`, `VLLM_MODEL`, `TORCH_WORKER_URL`, `DEFAULT_RTSP_URL`).
+- Keep `PYWAGGLE_PUBLISH_ENABLED=true` for publish forwarding.
+
