@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-import base64
-import json
+import asyncio
 import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
 from sage_mt.config import GatewaySettings
+from sage_mt.rtsp import capture_rtsp_frame_base64
 
 log = logging.getLogger(__name__)
 
@@ -113,6 +112,25 @@ async def api_metrics_proxy() -> dict:
     return await _proxy().get_metrics()
 
 
+@app.get("/api/rtsp-preview")
+async def api_rtsp_preview(rtsp_url: str | None = Query(default=None)) -> Response:
+    gateway_settings = GatewaySettings()
+    resolved = rtsp_url or gateway_settings.default_rtsp_url
+    if not resolved:
+        raise HTTPException(400, "No RTSP URL provided and DEFAULT_RTSP_URL not set")
+    try:
+        frame_b64 = await asyncio.to_thread(
+            capture_rtsp_frame_base64,
+            resolved,
+            gateway_settings.rtsp_snapshot_timeout_s,
+        )
+    except Exception as e:
+        raise HTTPException(502, f"RTSP preview failed: {e}") from e
+    import base64
+
+    return Response(content=base64.b64decode(frame_b64), media_type="image/jpeg")
+
+
 @app.get("/", response_class=HTMLResponse)
 def ui() -> str:
     return """
@@ -183,6 +201,17 @@ def ui() -> str:
     <div class="section">
       <h2>Scheduler metrics (live)</h2>
       <pre id="metrics">Waiting...</pre>
+    </div>
+
+    <div class="section">
+      <h2>RTSP preview</h2>
+      <div class="row">
+        <label>Preview URL</label>
+        <input id="preview_rtsp_url" placeholder="Leave blank to use DEFAULT_RTSP_URL" />
+      </div>
+      <button onclick="refreshPreview()">Refresh preview</button>
+      <img id="rtsp_preview" alt="RTSP preview" style="margin-top: 0.75rem; max-width: 100%; border-radius: 8px; border: 1px solid #ddd;" />
+      <div class="muted" id="preview_status">Preview idle.</div>
     </div>
 
     <script>
@@ -312,10 +341,31 @@ def ui() -> str:
         }
       }
 
+      async function refreshPreview() {
+        const img = document.getElementById('rtsp_preview');
+        const status = document.getElementById('preview_status');
+        const url = document.getElementById('preview_rtsp_url').value.trim();
+        const qs = url ? `?rtsp_url=${encodeURIComponent(url)}` : '';
+        status.textContent = 'Fetching frame...';
+        try {
+          const ts = Date.now();
+          img.src = `/api/rtsp-preview${qs}${qs ? '&' : '?'}_=${ts}`;
+          await new Promise((resolve, reject) => {
+            img.onload = () => resolve(true);
+            img.onerror = () => reject(new Error('failed to load image'));
+          });
+          status.textContent = `Preview updated at ${new Date().toLocaleTimeString()}`;
+        } catch (e) {
+          status.textContent = `Preview error: ${String(e)}`;
+        }
+      }
+
       async function start() {
         onEngineChange();
         await refreshMetrics();
+        await refreshPreview();
         setInterval(refreshMetrics, 2000);
+        setInterval(refreshPreview, 3000);
       }
       start();
     </script>
