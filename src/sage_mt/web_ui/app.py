@@ -158,7 +158,9 @@ def ui() -> str:
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Sage UI</title>
     <style>
-      body { font-family: system-ui, sans-serif; max-width: 52rem; margin: 2rem auto; padding: 0 1rem; }
+      body { font-family: system-ui, sans-serif; max-width: 110rem; margin: 1.25rem auto; padding: 0 1rem; }
+      .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; align-items: start; }
+      .col { min-width: 0; }
       .row { display: grid; grid-template-columns: 10rem 1fr; gap: 0.75rem; align-items: start; margin-top: 0.75rem; }
       label { font-size: 0.9rem; font-weight: 600; color: #222; }
       input, select, textarea { width: 100%; padding: 0.5rem; box-sizing: border-box; }
@@ -167,70 +169,79 @@ def ui() -> str:
       pre { background: #f6f6f6; padding: 0.75rem; border-radius: 8px; overflow: auto; }
       .muted { color: #666; font-size: 0.9rem; margin-top: 0.5rem; }
       .section { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid #eee; }
+      @media (max-width: 1100px) {
+        .layout { grid-template-columns: 1fr; }
+      }
     </style>
   </head>
   <body>
     <h1>Sage Inference Gateway</h1>
     <div class="muted">Interactive submit + polling.</div>
 
-    <div class="section">
-      <h2>Submit job</h2>
+    <div class="layout">
+      <div class="col">
+        <div class="section">
+          <h2>Submit job</h2>
 
-      <div class="row"><label>tenant_id</label><input id="tenant_id" value="tenant-a" /></div>
-      <div class="row"><label>latency_class</label>
-        <select id="latency_class">
-          <option value="realtime">realtime</option>
-          <option value="interactive" selected>interactive</option>
-          <option value="batch">batch</option>
-        </select>
+          <div class="row"><label>tenant_id</label><input id="tenant_id" value="tenant-a" /></div>
+          <div class="row"><label>latency_class</label>
+            <select id="latency_class">
+              <option value="realtime">realtime</option>
+              <option value="interactive" selected>interactive</option>
+              <option value="batch">batch</option>
+            </select>
+          </div>
+          <div class="row"><label>engine</label>
+            <select id="engine" onchange="onEngineChange()">
+              <option value="vllm" selected>vLLM</option>
+              <option value="torch">BioCLIP (torch)</option>
+            </select>
+          </div>
+
+          <div class="row"><label>deadline_ms</label><input id="deadline_ms" placeholder="optional" /></div>
+          <div class="row"><label>expected_runtime_ms</label><input id="expected_runtime_ms" placeholder="optional" /></div>
+
+          <div id="vllm_section">
+            <div class="row"><label>prompt</label><textarea id="prompt" placeholder="Summarize image"></textarea></div>
+            <div class="row"><label>max_tokens</label><input id="max_tokens" value="32" /></div>
+            <div class="row"><label>image (optional)</label><input id="vllm_image" type="file" accept="image/*" /></div>
+            <div class="row"><label>RTSP URL (optional)</label><input id="vllm_rtsp_url" placeholder="rtsp://.../media.smp" /></div>
+            <div class="row"><label>Use preview frame</label><input id="vllm_use_preview_frame" type="checkbox" checked /></div>
+          </div>
+
+          <div id="torch_section" style="display:none;">
+            <div class="row"><label>labels</label><textarea id="labels" placeholder="Comma-separated, e.g. forest fire, wildfire smoke"></textarea></div>
+            <div class="row"><label>image</label><input id="torch_image" type="file" accept="image/*" /></div>
+            <div class="row"><label>RTSP URL (optional)</label><input id="torch_rtsp_url" placeholder="rtsp://.../media.smp" /></div>
+            <div class="row"><label>Use preview frame</label><input id="torch_use_preview_frame" type="checkbox" checked /></div>
+          </div>
+
+          <button onclick="submitJob()">Submit</button>
+        </div>
+
+        <div class="section">
+          <h2>Response</h2>
+          <pre id="out">Submit to see results...</pre>
+        </div>
       </div>
-      <div class="row"><label>engine</label>
-        <select id="engine" onchange="onEngineChange()">
-          <option value="vllm" selected>vLLM</option>
-          <option value="torch">BioCLIP (torch)</option>
-        </select>
+
+      <div class="col">
+        <div class="section">
+          <h2>RTSP preview</h2>
+          <div class="row">
+            <label>Preview URL</label>
+            <input id="preview_rtsp_url" placeholder="Leave blank to use DEFAULT_RTSP_URL" />
+          </div>
+          <button onclick="refreshPreview()">Refresh preview</button>
+          <img id="rtsp_preview" alt="RTSP preview" style="margin-top: 0.75rem; max-width: 100%; border-radius: 8px; border: 1px solid #ddd;" />
+          <div class="muted" id="preview_status">Preview idle.</div>
+        </div>
+
+        <div class="section">
+          <h2>Scheduler metrics (live)</h2>
+          <pre id="metrics">Waiting...</pre>
+        </div>
       </div>
-
-      <div class="row"><label>deadline_ms</label><input id="deadline_ms" placeholder="optional" /></div>
-      <div class="row"><label>expected_runtime_ms</label><input id="expected_runtime_ms" placeholder="optional" /></div>
-
-      <div id="vllm_section">
-        <div class="row"><label>prompt</label><textarea id="prompt" placeholder="Summarize image"></textarea></div>
-        <div class="row"><label>max_tokens</label><input id="max_tokens" value="32" /></div>
-        <div class="row"><label>image (optional)</label><input id="vllm_image" type="file" accept="image/*" /></div>
-        <div class="row"><label>RTSP URL (optional)</label><input id="vllm_rtsp_url" placeholder="rtsp://.../media.smp" /></div>
-        <div class="row"><label>Use preview frame</label><input id="vllm_use_preview_frame" type="checkbox" checked /></div>
-      </div>
-
-      <div id="torch_section" style="display:none;">
-        <div class="row"><label>labels</label><textarea id="labels" placeholder="Comma-separated, e.g. forest fire, wildfire smoke"></textarea></div>
-        <div class="row"><label>image</label><input id="torch_image" type="file" accept="image/*" /></div>
-        <div class="row"><label>RTSP URL (optional)</label><input id="torch_rtsp_url" placeholder="rtsp://.../media.smp" /></div>
-        <div class="row"><label>Use preview frame</label><input id="torch_use_preview_frame" type="checkbox" checked /></div>
-      </div>
-
-      <button onclick="submitJob()">Submit</button>
-    </div>
-
-    <div class="section">
-      <h2>Response</h2>
-      <pre id="out">Submit to see results...</pre>
-    </div>
-
-    <div class="section">
-      <h2>Scheduler metrics (live)</h2>
-      <pre id="metrics">Waiting...</pre>
-    </div>
-
-    <div class="section">
-      <h2>RTSP preview</h2>
-      <div class="row">
-        <label>Preview URL</label>
-        <input id="preview_rtsp_url" placeholder="Leave blank to use DEFAULT_RTSP_URL" />
-      </div>
-      <button onclick="refreshPreview()">Refresh preview</button>
-      <img id="rtsp_preview" alt="RTSP preview" style="margin-top: 0.75rem; max-width: 100%; border-radius: 8px; border: 1px solid #ddd;" />
-      <div class="muted" id="preview_status">Preview idle.</div>
     </div>
 
     <script>
