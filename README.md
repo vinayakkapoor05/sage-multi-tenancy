@@ -4,6 +4,7 @@ Gateway + in-process scheduler + optional BioCLIP torch worker. Submit jobs via 
 
 ## Quick start (three terminals on Orin)
 
+Note for the Thor use: https://catalog.ngc.nvidia.com/orgs/nvidia/containers/vllm?version=26.04-py3
 1. **vLLM** (serve the model from SSD):
 
    ```bash
