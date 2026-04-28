@@ -131,6 +131,23 @@ async def api_rtsp_preview(rtsp_url: str | None = Query(default=None)) -> Respon
     return Response(content=base64.b64decode(frame_b64), media_type="image/jpeg")
 
 
+@app.get("/api/rtsp-preview-base64")
+async def api_rtsp_preview_base64(rtsp_url: str | None = Query(default=None)) -> dict:
+    gateway_settings = GatewaySettings()
+    resolved = rtsp_url or gateway_settings.default_rtsp_url
+    if not resolved:
+        raise HTTPException(400, "No RTSP URL provided and DEFAULT_RTSP_URL not set")
+    try:
+        frame_b64 = await asyncio.to_thread(
+            capture_rtsp_frame_base64,
+            resolved,
+            gateway_settings.rtsp_snapshot_timeout_s,
+        )
+    except Exception as e:
+        raise HTTPException(502, f"RTSP preview failed: {e}") from e
+    return {"image_base64": frame_b64, "image_mime_type": "image/jpeg", "rtsp_url": resolved}
+
+
 @app.get("/", response_class=HTMLResponse)
 def ui() -> str:
     return """
@@ -182,12 +199,14 @@ def ui() -> str:
         <div class="row"><label>max_tokens</label><input id="max_tokens" value="32" /></div>
         <div class="row"><label>image (optional)</label><input id="vllm_image" type="file" accept="image/*" /></div>
         <div class="row"><label>RTSP URL (optional)</label><input id="vllm_rtsp_url" placeholder="rtsp://.../media.smp" /></div>
+        <div class="row"><label>Use preview frame</label><input id="vllm_use_preview_frame" type="checkbox" checked /></div>
       </div>
 
       <div id="torch_section" style="display:none;">
         <div class="row"><label>labels</label><textarea id="labels" placeholder="Comma-separated, e.g. forest fire, wildfire smoke"></textarea></div>
         <div class="row"><label>image</label><input id="torch_image" type="file" accept="image/*" /></div>
         <div class="row"><label>RTSP URL (optional)</label><input id="torch_rtsp_url" placeholder="rtsp://.../media.smp" /></div>
+        <div class="row"><label>Use preview frame</label><input id="torch_use_preview_frame" type="checkbox" checked /></div>
       </div>
 
       <button onclick="submitJob()">Submit</button>
@@ -219,6 +238,8 @@ def ui() -> str:
       let vllmImageMimeType = null;
       let torchImageBase64 = null;
       let torchImageMimeType = null;
+      let lastPreviewImageBase64 = null;
+      let lastPreviewImageMimeType = "image/jpeg";
 
       function splitDataUrl(dataUrl) {
         const parts = String(dataUrl).split(',');
@@ -274,6 +295,8 @@ def ui() -> str:
         const labelsRaw = document.getElementById('labels').value;
         const vllmRtsp = document.getElementById('vllm_rtsp_url').value.trim();
         const torchRtsp = document.getElementById('torch_rtsp_url').value.trim();
+        const vllmUsePreview = document.getElementById('vllm_use_preview_frame').checked;
+        const torchUsePreview = document.getElementById('torch_use_preview_frame').checked;
 
         let body = { tenant_id, latency_class, engine };
         if (deadline_ms) body.deadline_ms = parseInt(deadline_ms, 10);
@@ -281,21 +304,30 @@ def ui() -> str:
 
         if (engine === 'vllm') {
           body.vllm = { prompt: prompt, max_tokens: max_tokens };
-          if (vllmRtsp) body.vllm.rtsp_url = vllmRtsp;
-          if (vllmImageBase64) {
-            body.vllm.image_base64 = vllmImageBase64;
-            body.vllm.image_mime_type = vllmImageMimeType || 'image/jpeg';
+          let chosenVllmImage = vllmImageBase64;
+          let chosenVllmMime = vllmImageMimeType;
+          if (!chosenVllmImage && vllmUsePreview) {
+            chosenVllmImage = lastPreviewImageBase64;
+            chosenVllmMime = lastPreviewImageMimeType;
+          }
+          if (chosenVllmImage) {
+            body.vllm.image_base64 = chosenVllmImage;
+            body.vllm.image_mime_type = chosenVllmMime || 'image/jpeg';
+          } else if (vllmRtsp) {
+            body.vllm.rtsp_url = vllmRtsp;
           }
         } else {
           const labels = labelsRaw.split(',').map(s => s.trim()).filter(Boolean);
-          body.torch = { labels: labels, image_base64: torchImageBase64 };
-          if (torchRtsp) body.torch.rtsp_url = torchRtsp;
+          let chosenTorchImage = torchImageBase64;
+          if (!chosenTorchImage && torchUsePreview) chosenTorchImage = lastPreviewImageBase64;
+          body.torch = { labels: labels, image_base64: chosenTorchImage };
+          if (!chosenTorchImage && torchRtsp) body.torch.rtsp_url = torchRtsp;
         }
 
         if (engine === 'torch') {
           if (!labelsRaw.trim()) { alert('Provide torch labels'); return; }
-          if (!torchImageBase64 && !torchRtsp) {
-            alert('Select an image or provide RTSP URL');
+          if (!torchImageBase64 && !(torchUsePreview && lastPreviewImageBase64) && !torchRtsp) {
+            alert('Select an image, use preview frame, or provide RTSP URL');
             return;
           }
         }
@@ -348,6 +380,14 @@ def ui() -> str:
         const qs = url ? `?rtsp_url=${encodeURIComponent(url)}` : '';
         status.textContent = 'Fetching frame...';
         try {
+          const metaRes = await fetch(`/api/rtsp-preview-base64${qs}`);
+          if (!metaRes.ok) {
+            const txt = await metaRes.text();
+            throw new Error(`preview fetch failed: ${metaRes.status} ${txt}`);
+          }
+          const meta = await metaRes.json();
+          lastPreviewImageBase64 = meta.image_base64 || null;
+          lastPreviewImageMimeType = meta.image_mime_type || 'image/jpeg';
           const ts = Date.now();
           img.src = `/api/rtsp-preview${qs}${qs ? '&' : '?'}_=${ts}`;
           await new Promise((resolve, reject) => {
