@@ -14,7 +14,9 @@ import httpx
 
 from sage_mt.config import GatewaySettings
 from sage_mt.models import Engine, JobRecord, JobSubmit, LatencyClass, TorchPayload, VllmPayload
+from sage_mt.publisher import NodePublisher
 from sage_mt.resource_layer import GPUResourceLayer
+from sage_mt.rtsp import capture_rtsp_frame_base64
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +50,7 @@ class InferenceScheduler:
     _stop: asyncio.Event = field(default_factory=asyncio.Event)
 
     _resource_layer: GPUResourceLayer | None = None
+    _publisher: NodePublisher | None = None
 
     _vllm_rt: deque[_VllmItem] = field(default_factory=deque)
     _vllm_by_tenant: dict[str, deque[_VllmItem]] = field(
@@ -68,6 +71,7 @@ class InferenceScheduler:
     async def start(self) -> None:
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0))
         self._resource_layer = GPUResourceLayer(self.settings)
+        self._publisher = NodePublisher.create(enabled=self.settings.pywaggle_publish_enabled)
         self._stop.clear()
         self._task = asyncio.create_task(self._run_loop(), name="inference-scheduler")
 
@@ -83,6 +87,9 @@ class InferenceScheduler:
         if self._client:
             await self._client.aclose()
             self._client = None
+        if self._publisher:
+            self._publisher.close()
+            self._publisher = None
 
     async def submit(self, body: JobSubmit) -> str:
         now_ms = int(time.time() * 1000)
@@ -119,8 +126,15 @@ class InferenceScheduler:
                 self._vllm_by_tenant[body.tenant_id].append(item)
             return job_id
 
-        if not body.torch or not body.torch.image_base64:
-            self._fail(job_id, "torch payload with image_base64 required")
+        if not body.torch:
+            self._fail(job_id, "torch payload required")
+            return job_id
+        if (
+            not body.torch.image_base64
+            and not body.torch.rtsp_url
+            and not self.settings.default_rtsp_url
+        ):
+            self._fail(job_id, "torch payload needs image_base64, rtsp_url, or DEFAULT_RTSP_URL")
             return job_id
         self._torch_by_tenant[body.tenant_id].append(
             _TorchItem(
@@ -248,6 +262,23 @@ class InferenceScheduler:
             rec.status = "failed"
             rec.error = message
             self._record_deadline_miss_if_any(rec)
+            if self._publisher:
+                self._publisher.publish_job(rec)
+
+    async def _resolve_image_from_payload(
+        self, image_base64: str | None, rtsp_url: str | None
+    ) -> tuple[str | None, str | None]:
+        if image_base64:
+            return image_base64, "image/jpeg"
+        url = rtsp_url or self.settings.default_rtsp_url
+        if not url:
+            return None, None
+        frame_b64 = await asyncio.to_thread(
+            capture_rtsp_frame_base64,
+            url,
+            self.settings.rtsp_snapshot_timeout_s,
+        )
+        return frame_b64, "image/jpeg"
 
     async def _run_loop(self) -> None:
         assert self._client is not None
@@ -341,9 +372,18 @@ class InferenceScheduler:
         started = time.monotonic()
 
         url = f"{self.settings.vllm_base_url.rstrip('/')}/v1/chat/completions"
-        if item.payload.image_base64:
-            mime = item.payload.image_mime_type or "image/jpeg"
-            data_url = f"data:{mime};base64,{item.payload.image_base64}"
+        try:
+            image_b64, default_mime = await self._resolve_image_from_payload(
+                item.payload.image_base64, item.payload.rtsp_url
+            )
+        except Exception as e:
+            rec.status = "failed"
+            rec.error = f"rtsp snapshot error: {e}"
+            return
+
+        if image_b64:
+            mime = item.payload.image_mime_type or default_mime or "image/jpeg"
+            data_url = f"data:{mime};base64,{image_b64}"
             content = [
                 {"type": "text", "text": item.payload.prompt},
                 {"type": "image_url", "image_url": {"url": data_url}},
@@ -373,6 +413,8 @@ class InferenceScheduler:
             usage_ms = max(elapsed_ms, item.expected_runtime_ms)
             self._record_usage(item.tenant_id, usage_ms)
             self._record_deadline_miss_if_any(rec)
+            if rec.status in {"completed", "failed"} and self._publisher:
+                self._publisher.publish_job(rec)
 
     async def _run_torch_batch(self, client: httpx.AsyncClient, batch: list[_TorchItem]) -> None:
         assert self._resource_layer is not None
@@ -384,9 +426,30 @@ class InferenceScheduler:
         self._resource_layer.on_start(Engine.torch)
         started = time.monotonic()
         url = f"{self.settings.torch_worker_url.rstrip('/')}/v1/infer"
+        resolved_items: list[dict[str, str]] = []
+        for it in batch:
+            try:
+                image_b64, _ = await self._resolve_image_from_payload(
+                    it.payload.image_base64, it.payload.rtsp_url
+                )
+            except Exception as e:
+                rec = self.jobs[it.job_id]
+                rec.status = "failed"
+                rec.error = f"rtsp snapshot error: {e}"
+                continue
+            if not image_b64:
+                rec = self.jobs[it.job_id]
+                rec.status = "failed"
+                rec.error = "no image available for torch inference"
+                continue
+            resolved_items.append({"job_id": it.job_id, "image_base64": image_b64})
+
+        if not resolved_items:
+            return
+
         req = {
             "labels": batch[0].payload.labels,
-            "items": [{"job_id": it.job_id, "image_base64": it.payload.image_base64} for it in batch],
+            "items": resolved_items,
         }
         try:
             r = await client.post(url, json=req)
@@ -421,7 +484,10 @@ class InferenceScheduler:
             for it in batch:
                 usage_ms = max(split_ms, it.expected_runtime_ms)
                 self._record_usage(it.tenant_id, usage_ms)
-                self._record_deadline_miss_if_any(self.jobs[it.job_id])
+                rec = self.jobs[it.job_id]
+                self._record_deadline_miss_if_any(rec)
+                if rec.status in {"completed", "failed"} and self._publisher:
+                    self._publisher.publish_job(rec)
 
     async def _pull_vllm_kv_metrics(self, client: httpx.AsyncClient) -> None:
         metrics_url = f"{self.settings.vllm_base_url.rstrip('/')}/metrics"

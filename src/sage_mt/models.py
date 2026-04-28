@@ -22,6 +22,7 @@ class VllmPayload(BaseModel):
     max_tokens: int = 256
     image_base64: str | None = None
     image_mime_type: str | None = None
+    rtsp_url: str | None = None
 
 
 class TorchPayload(BaseModel):
@@ -29,6 +30,7 @@ class TorchPayload(BaseModel):
 
     labels: list[str] = Field(min_length=1)
     image_base64: str | None = None
+    rtsp_url: str | None = None
 
 
 class JobSubmit(BaseModel):

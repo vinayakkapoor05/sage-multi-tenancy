@@ -163,11 +163,13 @@ def ui() -> str:
         <div class="row"><label>prompt</label><textarea id="prompt" placeholder="Summarize image"></textarea></div>
         <div class="row"><label>max_tokens</label><input id="max_tokens" value="32" /></div>
         <div class="row"><label>image (optional)</label><input id="vllm_image" type="file" accept="image/*" /></div>
+        <div class="row"><label>RTSP URL (optional)</label><input id="vllm_rtsp_url" placeholder="rtsp://.../media.smp" /></div>
       </div>
 
       <div id="torch_section" style="display:none;">
         <div class="row"><label>labels</label><textarea id="labels" placeholder="Comma-separated, e.g. forest fire, wildfire smoke"></textarea></div>
         <div class="row"><label>image</label><input id="torch_image" type="file" accept="image/*" /></div>
+        <div class="row"><label>RTSP URL (optional)</label><input id="torch_rtsp_url" placeholder="rtsp://.../media.smp" /></div>
       </div>
 
       <button onclick="submitJob()">Submit</button>
@@ -241,6 +243,8 @@ def ui() -> str:
         const prompt = document.getElementById('prompt').value;
         const max_tokens = parseInt(document.getElementById('max_tokens').value, 10);
         const labelsRaw = document.getElementById('labels').value;
+        const vllmRtsp = document.getElementById('vllm_rtsp_url').value.trim();
+        const torchRtsp = document.getElementById('torch_rtsp_url').value.trim();
 
         let body = { tenant_id, latency_class, engine };
         if (deadline_ms) body.deadline_ms = parseInt(deadline_ms, 10);
@@ -248,6 +252,7 @@ def ui() -> str:
 
         if (engine === 'vllm') {
           body.vllm = { prompt: prompt, max_tokens: max_tokens };
+          if (vllmRtsp) body.vllm.rtsp_url = vllmRtsp;
           if (vllmImageBase64) {
             body.vllm.image_base64 = vllmImageBase64;
             body.vllm.image_mime_type = vllmImageMimeType || 'image/jpeg';
@@ -255,11 +260,15 @@ def ui() -> str:
         } else {
           const labels = labelsRaw.split(',').map(s => s.trim()).filter(Boolean);
           body.torch = { labels: labels, image_base64: torchImageBase64 };
+          if (torchRtsp) body.torch.rtsp_url = torchRtsp;
         }
 
         if (engine === 'torch') {
           if (!labelsRaw.trim()) { alert('Provide torch labels'); return; }
-          if (!torchImageBase64) { alert('Select an image'); return; }
+          if (!torchImageBase64 && !torchRtsp) {
+            alert('Select an image or provide RTSP URL');
+            return;
+          }
         }
 
         try {

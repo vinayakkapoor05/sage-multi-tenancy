@@ -29,6 +29,13 @@ class GatewaySettings(BaseSettings):
     max_inflight_vllm: int = 2
     max_inflight_torch: int = 2
 
+    # Optional RTSP snapshot source for jobs without direct image input
+    default_rtsp_url: str | None = None
+    rtsp_snapshot_timeout_s: float = 8.0
+
+    # Optional pywaggle publishing
+    pywaggle_publish_enabled: bool = False
+
 
 class TorchWorkerSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
